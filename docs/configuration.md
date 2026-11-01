@@ -1639,8 +1639,8 @@ Configure transcription under the top-level `transcription` section:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `enabled` | `true` | Enables audio transcription for both chat-channel voice messages and WebUI microphone input. |
-| `provider` | `"groq"` | Transcription backend: `"groq"`, `"openai"`, `"openrouter"`, `"xiaomi_mimo"`, `"stepfun"`, `"assemblyai"`, or `"siliconflow"`. |
-| `model` | provider default | Optional transcription model override. Defaults to `whisper-large-v3` for Groq, `whisper-1` for OpenAI, `openai/whisper-1` for OpenRouter, `mimo-v2.5-asr` for Xiaomi MiMo ASR, `stepaudio-2.5-asr` for StepFun ASR, `universal-3-pro,universal-2` for AssemblyAI, and `FunAudioLLM/SenseVoiceSmall` for SiliconFlow. OpenRouter accepts only speech-to-text models on its transcription endpoint, such as `nvidia/parakeet-tdt-0.6b-v3`, `openai/whisper-1`, or `openai/gpt-4o-transcribe`; chat LLMs are rejected there. AssemblyAI accepts a comma-separated model fallback list. |
+| `provider` | `"groq"` | Transcription backend: `"groq"`, `"openai"`, `"openrouter"`, `"xiaomi_mimo"`, `"stepfun"`, `"assemblyai"`, `"siliconflow"`, or `"gemini"`. |
+| `model` | provider default | Optional transcription model override. Defaults to `whisper-large-v3` for Groq, `whisper-1` for OpenAI, `openai/whisper-1` for OpenRouter, `mimo-v2.5-asr` for Xiaomi MiMo ASR, `stepaudio-2.5-asr` for StepFun ASR, `universal-3-pro,universal-2` for AssemblyAI, `FunAudioLLM/SenseVoiceSmall` for SiliconFlow, and `gemini-2.5-flash` for Gemini. OpenRouter accepts only speech-to-text models on its transcription endpoint, such as `nvidia/parakeet-tdt-0.6b-v3`, `openai/whisper-1`, or `openai/gpt-4o-transcribe`; chat LLMs are rejected there. AssemblyAI accepts a comma-separated model fallback list. |
 | `language` | `null` | Optional ISO-639 language hint, e.g. `"en"`, `"zh"`, `"ko"`, or `"ja"`. |
 | `maxDurationSec` | `120` | Maximum WebUI recording duration. |
 | `maxUploadMb` | `25` | Maximum WebUI audio upload size. |
@@ -1676,6 +1676,10 @@ Transcription credentials are intentionally not stored in `transcription`. Put t
 </details>
 
 Selecting a transcription provider does not configure credentials by itself. For example, the effective provider may default to Groq for compatibility, but transcription is only usable when `providers.groq.apiKey` or the matching environment-backed config is available. The Settings UI writes only the top-level `transcription` fields.
+
+For Gemini, select **Gemini** in transcription settings and configure the existing Gemini provider's API key, or set `GEMINI_API_KEY` (`GOOGLE_API_KEY` is also accepted). The canonical transcription name is `gemini`; `google_gemini` is accepted as an alias. Gemini chat settings are unchanged: transcription converts the shared OpenAI-compatible API base to the native `models/{model}:generateContent` endpoint and uses `x-goog-api-key` authentication.
+
+Gemini is instructed to transcribe verbatim in the original language, with an optional language hint; generative transcription can still make mistakes. The WebUI converts browser recordings to WAV using its existing audio conversion path. The adapter uses inline audio for short voice messages, limited to 14 MiB before base64 encoding to leave room within the 20 MB request limit; larger-file uploads through the Files API are not supported by this adapter. Free-tier eligibility and quotas depend on Google's current model, account, and regional policies; transcription is not guaranteed to be free or unlimited.
 
 If you are adding a new transcription provider, see [`development.md`](./development.md#adding-a-transcription-provider).
 

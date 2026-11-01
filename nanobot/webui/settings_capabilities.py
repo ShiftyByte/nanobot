@@ -10,7 +10,10 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict
 
 from nanobot.agent.tools.web import SEARCH_PROVIDER_OPTIONS
 from nanobot.api.runtime import ApiRuntime, ApiStartOptions
-from nanobot.audio.transcription import resolve_transcription_config
+from nanobot.audio.transcription import (
+    _resolve_transcription_api_key,
+    resolve_transcription_config,
+)
 from nanobot.audio.transcription_registry import (
     resolve_transcription_provider,
     transcription_provider_names,
@@ -138,12 +141,16 @@ def _transcription_provider_rows(config: Config) -> list[dict[str, Any]]:
     for name in transcription_provider_names():
         spec = find_by_name(name)
         provider_config = getattr(config.providers, name, None)
+        api_key = (
+            _resolve_transcription_api_key(name, provider_config)
+            if name == "gemini" else getattr(provider_config, "api_key", None)
+        )
         rows.append(
             {
                 "name": name,
                 "label": spec.label if spec is not None else name,
-                "configured": bool(getattr(provider_config, "api_key", None)),
-                "api_key_hint": mask_secret_hint(getattr(provider_config, "api_key", None)),
+                "configured": bool(api_key),
+                "api_key_hint": mask_secret_hint(api_key),
                 "api_base": getattr(provider_config, "api_base", None),
                 "default_api_base": (
                     spec.default_api_base if spec and spec.default_api_base else None

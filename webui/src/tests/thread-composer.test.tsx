@@ -985,7 +985,7 @@ describe("ThreadComposer", () => {
     expect(getUserMedia).not.toHaveBeenCalled();
   });
 
-  it("converts voice recordings to wav for Xiaomi MiMo transcription", async () => {
+  it.each(["xiaomi_mimo", "gemini"])("converts voice recordings to wav for %s transcription", async (provider) => {
     mockVoiceRecorder(new Blob([new Uint8Array([1, 2, 3, 4])], { type: "audio/webm" }));
     const { decodeAudioData } = mockVoiceAudioInput(
       180,
@@ -1000,7 +1000,7 @@ describe("ThreadComposer", () => {
         onSend={vi.fn()}
         onTranscribeAudio={onTranscribeAudio}
         placeholder="Type your message..."
-        transcriptionProvider="xiaomi_mimo"
+        transcriptionProvider={provider}
       />,
     );
 

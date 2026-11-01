@@ -2925,3 +2925,48 @@ def test_legacy_openai_settings_can_return_to_auto(monkeypatch, tmp_path, field)
     monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
     update_provider_settings({"provider": ["openai"], field: ["auto"]})
     assert load_config(config_path).providers.openai.api is None
+
+
+@pytest.mark.parametrize("env_name", ["GEMINI_API_KEY", "GOOGLE_API_KEY"])
+def test_settings_payload_exposes_environment_backed_gemini_transcription(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    env_name: str,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    config.transcription.provider = "gemini"
+    save_config(config, config_path)
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setenv(env_name, "fake-transcription-key")
+
+    payload = settings_payload()
+
+    assert payload["transcription"]["provider"] == "gemini"
+    assert payload["transcription"]["model"] == "gemini-2.5-flash"
+    assert payload["transcription"]["provider_configured"] is True
+    providers = {row["name"]: row for row in payload["transcription"]["providers"]}
+    assert providers["gemini"]["label"] == "Gemini"
+    assert providers["gemini"]["configured"] is True
+    assert providers["gemini"]["api_key_hint"]
+    assert providers["gemini"]["api_key_hint"] != "fake-transcription-key"
+
+
+def test_transcription_settings_accept_gemini_alias_without_changing_chat(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "config.json"
+    config = Config()
+    original_provider = config.providers.gemini.model_dump()
+    save_config(config, config_path)
+    monkeypatch.setattr("nanobot.config.loader._current_config_path", config_path)
+
+    payload = update_transcription_settings({"provider": ["google_gemini"], "model": [""]})
+
+    saved = load_config(config_path)
+    assert saved.transcription.provider == "gemini"
+    assert payload["transcription"]["model"] == "gemini-2.5-flash"
+    assert saved.providers.gemini.model_dump() == original_provider

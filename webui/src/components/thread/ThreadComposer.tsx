@@ -1907,7 +1907,7 @@ export function ThreadComposer({
     onError: setVoiceError,
     onTranscript: appendTranscription,
     onTranscribeAudio,
-    wantsWav: transcriptionProvider === "xiaomi_mimo",
+    wantsWav: transcriptionProvider === "xiaomi_mimo" || transcriptionProvider === "gemini",
   });
 
   useEffect(() => () => clearVoiceErrorTimers(), [clearVoiceErrorTimers]);

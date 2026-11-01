@@ -98,6 +98,9 @@ def _resolve_transcription_api_key(
         if env_key:
             return env_key
 
+    if provider == "gemini":
+        return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY", "")
+
     env_key = spec.env_key if spec else ""
     return os.environ.get(env_key, "") if env_key else ""
 

@@ -80,6 +80,12 @@ TRANSCRIPTION_PROVIDERS: tuple[TranscriptionProviderSpec, ...] = (
         adapter="nanobot.providers.transcription:OpenAITranscriptionProvider",
         aliases=("silicon",),
     ),
+    TranscriptionProviderSpec(
+        name="gemini",
+        default_model="gemini-2.5-flash",
+        adapter="nanobot.providers.gemini_transcription:GoogleGeminiTranscriptionProvider",
+        aliases=("google_gemini",),
+    ),
 )
 
 _BY_NAME = {spec.name: spec for spec in TRANSCRIPTION_PROVIDERS}
