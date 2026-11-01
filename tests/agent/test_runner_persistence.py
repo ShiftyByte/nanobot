@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import time
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -474,3 +475,143 @@ async def test_grep_page_survives_default_result_normalization(tmp_path):
     assert len(normalized) <= _MAX_TOOL_RESULT_CHARS
     assert normalized == page
     assert not (tmp_path / ".nanobot/tool-results").exists()
+
+
+@pytest.mark.parametrize(
+    ("session_key", "call_id"),
+    [
+        ("telegram:123", "call_" + "a" * 24 + "|" + "b" * 444),
+        ("telegram:123", "ק" * 120),
+        ("session:" + "s" * 400, "call_big"),
+        ("ש" * 120, "call_big"),
+        ("telegram:123", "c" * 214),  # .txt fits, but the atomic temp name would not.
+    ],
+)
+async def test_long_storage_keys_keep_protocol_ids_and_readable_references(
+    tmp_path, session_key, call_id,
+):
+    import re
+
+    from nanobot.agent.context_governance import ContextGovernanceConfig, ContextGovernor
+    from nanobot.agent.tools.filesystem import ReadFileTool
+    from nanobot.agent.tools.registry import ToolRegistry
+
+    config = ContextGovernanceConfig(
+        provider=MagicMock(), model="test", tools=ToolRegistry(), workspace=tmp_path,
+        session_key=session_key, max_tool_result_chars=2048,
+    )
+    raw = "large result " * 2000
+    messages = [{"role": "tool", "name": "exec", "tool_call_id": call_id, "content": raw}]
+    result = ContextGovernor().apply_tool_result_budget(config, messages)
+    reference = result[0]["content"]
+    match = re.search(r"workspace path: (.+)", reference)
+    assert match is not None
+    path = Path(match[1])
+    root = tmp_path / ".nanobot/tool-results"
+    assert path.is_relative_to(root)
+    assert len(path.name.encode("utf-8")) <= 200
+    assert len(path.parent.name.encode("utf-8")) <= 200
+    assert raw in await ReadFileTool(workspace=tmp_path).execute(path=str(path), force=True)
+    assert result[0]["tool_call_id"] == call_id
+    assert messages[0]["content"] == raw
+    assert ContextGovernor().apply_tool_result_budget(config, result) == result
+    assert list(root.rglob("*.tmp")) == []
+
+
+@pytest.mark.parametrize("tails", [("a", "b"), ("/a", "_a")])
+def test_long_ids_with_shared_prefix_have_distinct_stable_files(tmp_path, tails):
+    from nanobot.utils.helpers import maybe_persist_tool_result
+
+    prefix = "call_" + "x" * 400
+    references = [
+        maybe_persist_tool_result(tmp_path, "session", prefix + tail, text, max_chars=2048)
+        for tail, text in zip(tails, ["FIRST" * 1000, "SECOND" * 1000])
+    ]
+    files = list((tmp_path / ".nanobot/tool-results/session").glob("*.txt"))
+    assert len(files) == 2
+    assert {path.read_text() for path in files} == {"FIRST" * 1000, "SECOND" * 1000}
+    assert references[0] == maybe_persist_tool_result(
+        tmp_path, "session", prefix + tails[0], "FIRST" * 1000, max_chars=2048,
+    )
+    assert len(list(files[0].parent.glob("*.txt"))) == 2
+
+
+async def test_long_structured_result_blocks_keep_separate_saved_output(tmp_path):
+    from nanobot.agent.context_governance import ContextGovernanceConfig, ContextGovernor
+    from nanobot.agent.tools.registry import ToolRegistry
+
+    config = ContextGovernanceConfig(
+        provider=MagicMock(), model="test", tools=ToolRegistry(), workspace=tmp_path,
+        session_key="structured", max_tool_result_chars=2048,
+    )
+    raw_blocks = [{"type": "text", "text": text * 5000} for text in ["a", "b"]]
+    call_id = "call_short|" + "opaque" * 100
+    result = ContextGovernor.normalize_tool_result(config, call_id, "custom", raw_blocks)
+    assert result[0]["text"] != result[1]["text"]
+    files = list((tmp_path / ".nanobot/tool-results/structured").glob("*.txt"))
+    assert {path.read_text() for path in files} == {"a" * 5000, "b" * 5000}
+    assert ContextGovernor.normalize_tool_result(config, call_id, "custom", result) == result
+
+
+async def test_existing_legacy_names_and_tiny_references_are_reused(tmp_path):
+    from nanobot.agent.tools.filesystem import ReadFileTool
+    from nanobot.utils.file_io import write_text_atomic
+    from nanobot.utils.helpers import maybe_persist_tool_result
+
+    # Both names were valid on older versions. The file also leaves room for
+    # the old atomic writer's temporary suffix, despite exceeding the new budget.
+    session_key = "s" * 220
+    call_id = "c" * 210
+    bucket = tmp_path / ".nanobot/tool-results" / session_key
+    bucket.mkdir(parents=True)
+    path = bucket / (call_id + ".txt")
+    raw = "legacy output " * 1000
+    write_text_atomic(path, raw)
+    legacy_reference = f"[truncated: {path.resolve()}]"
+
+    result = maybe_persist_tool_result(tmp_path, session_key, call_id, legacy_reference, max_chars=64)
+
+    assert result == legacy_reference
+    assert path.read_text() == raw
+    assert raw in await ReadFileTool(workspace=tmp_path).execute(path=str(path), force=True)
+    assert list((tmp_path / ".nanobot/tool-results").glob("*")) == [bucket]
+    assert list(bucket.iterdir()) == [path]
+
+
+def test_unused_legacy_sized_names_are_shortened_before_atomic_write(tmp_path):
+    from nanobot.utils.helpers import maybe_persist_tool_result
+
+    # An absent legacy candidate can be probed safely, but must not be used for
+    # a new write whose atomic temporary filename would exceed 255 bytes.
+    maybe_persist_tool_result(tmp_path, "session", "c" * 240, "x" * 5000, max_chars=2048)
+    files = list((tmp_path / ".nanobot/tool-results/session").glob("*.txt"))
+    assert len(files) == 1
+    assert len(files[0].name.encode()) <= 200
+    assert files[0].read_text() == "x" * 5000
+
+
+def test_long_storage_names_never_probe_an_overlong_component(monkeypatch, tmp_path):
+    from nanobot.utils.helpers import maybe_persist_tool_result
+
+    exists = Path.exists
+
+    def checked_exists(path):
+        assert len(path.name.encode("utf-8")) <= 255
+        return exists(path)
+
+    monkeypatch.setattr(Path, "exists", checked_exists)
+    result = maybe_persist_tool_result(
+        tmp_path, "session_" + "s" * 400, "call_" + "c" * 400, "x" * 5000, max_chars=2048,
+    )
+    assert "tool output persisted" in result
+
+
+@pytest.mark.parametrize("session_key", [".", ".."])
+def test_session_bucket_names_stay_inside_tool_result_root(tmp_path, session_key):
+    from nanobot.utils.helpers import maybe_persist_tool_result
+
+    result = maybe_persist_tool_result(tmp_path, session_key, "call", "x" * 5000, max_chars=2048)
+    files = list((tmp_path / ".nanobot/tool-results").glob("*/*.txt"))
+    assert len(files) == 1
+    assert files[0].read_text() == "x" * 5000
+    assert str(files[0].resolve()) in result

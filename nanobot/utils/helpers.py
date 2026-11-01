@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import re
 import shutil
@@ -366,6 +367,9 @@ _UNSAFE_CHARS = re.compile(r'[<>:"/\\|?*]')
 _TOOL_RESULTS_DIR = ".nanobot/tool-results"
 _TOOL_RESULT_RETENTION_SECS = 7 * 24 * 60 * 60
 _TOOL_RESULT_MAX_BUCKETS = 32
+# Leave room within a 255-byte component for the atomic writer's 38-byte overhead.
+_TOOL_RESULT_NAME_BUDGET_BYTES = 200
+_TOOL_RESULT_LEGACY_NAME_MAX_BYTES = 255
 _TRUNCATED_SUFFIX = "\n... (truncated)"
 
 
@@ -552,6 +556,22 @@ def _cleanup_tool_result_buckets(root: Path, current_bucket: Path) -> None:
         shutil.rmtree(path, ignore_errors=True)
 
 
+def _tool_result_path(parent: Path, key: str, suffix: str = "") -> Path:
+    """Bound new storage names while keeping existing legacy references readable."""
+    name = f"{safe_filename(key)}{suffix}"
+    if name not in {"", ".", ".."} and "\0" not in name:
+        size = len(name.encode("utf-8"))
+        if size <= _TOOL_RESULT_NAME_BUDGET_BYTES:
+            return parent / name
+        # Never stat an overlong component: even Path.exists() can raise Errno 36.
+        if size <= _TOOL_RESULT_LEGACY_NAME_MAX_BYTES:
+            legacy = parent / name
+            if legacy.exists():
+                return legacy
+    digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
+    return parent / f"hash_{digest}{suffix}"
+
+
 def maybe_persist_tool_result(
     workspace: Path | None,
     session_key: str | None,
@@ -568,12 +588,12 @@ def maybe_persist_tool_result(
         return content
 
     root = ensure_dir(workspace / _TOOL_RESULTS_DIR)
-    bucket = ensure_dir(root / safe_filename(session_key or "default"))
+    bucket = ensure_dir(_tool_result_path(root, session_key or "default"))
     try:
         _cleanup_tool_result_buckets(root, bucket)
     except Exception:
         logger.exception("Failed to clean stale tool result buckets in {}", root)
-    path = bucket / f"{safe_filename(tool_call_id)}.txt"
+    path = _tool_result_path(bucket, tool_call_id, ".txt")
     if not path.exists():
         _write_text_atomic(path, content)
 
