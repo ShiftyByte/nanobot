@@ -1294,6 +1294,28 @@ class OpenAIImageGenerationClient(ImageGenerationProvider):
         return GeneratedImageResponse(images=images, content="", raw=payload)
 
 
+class AzureOpenAIImageGenerationClient(OpenAIImageGenerationClient):
+    """Azure OpenAI v1 Images API with an explicit resource base and Bearer key."""
+
+    provider_name = "azure_openai"
+    model_options = ("gpt-image-2.5-flare", "gpt-image-2", "gpt-image-1")
+    missing_key_message = (
+        "Azure OpenAI API key is not configured. Set providers.azureOpenai.apiKey."
+    )
+    missing_base_message = (
+        "Azure OpenAI image API base is not configured. Set "
+        "providers.azureOpenai.apiBase to "
+        "https://RESOURCE.openai.azure.com/openai/v1."
+    )
+
+    def _resolve_base_url(self, api_base: str | None) -> str:
+        # Never fall back to the public OpenAI endpoint for Azure credentials.
+        base = (api_base or "").strip().rstrip("/")
+        if not base:
+            raise ImageGenerationError(self.missing_base_message)
+        return base
+
+
 class CustomImageGenerationClient(ImageGenerationProvider):
     """OpenAI-compatible Images API for user-configured custom providers."""
 
@@ -2045,6 +2067,7 @@ register_image_gen_provider(GeminiImageGenerationClient)
 register_image_gen_provider(OllamaImageGenerationClient)
 register_image_gen_provider(MiniMaxImageGenerationClient)
 register_image_gen_provider(OpenAIImageGenerationClient)
+register_image_gen_provider(AzureOpenAIImageGenerationClient)
 register_image_gen_provider(OpenRouterImageGenerationClient)
 register_image_gen_provider(StepFunImageGenerationClient)
 register_image_gen_provider(ZhipuImageGenerationClient)
